@@ -1,0 +1,144 @@
+# ============================================================
+# Finans Portalı – Docker Compose Orkestrasyon
+# ============================================================
+# Kullanım:
+#   docker-compose up -d          → Tüm servisleri başlat
+#   docker-compose down           → Tüm servisleri durdur
+#   docker-compose logs -f backend → Backend loglarını takip et
+# ============================================================
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: finance-portal-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: finance_portal
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - finance-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Keycloak ───────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: finance-portal-keycloak
+    restart: unless-stopped
+    command: start-dev
+    ports:
+      - "8443:8080"
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/finance_portal
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - finance-network
+
+  # ── OpenSearch ─────────────────────────────────────────────
+  opensearch:
+    image: opensearchproject/opensearch:2.12.0
+    container_name: finance-portal-opensearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks:
+      - finance-network
+
+  # ── OpenSearch Dashboards ──────────────────────────────────
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.12.0
+    container_name: finance-portal-dashboards
+    restart: unless-stopped
+    ports:
+      - "5601:5601"
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      - opensearch
+    networks:
+      - finance-network
+
+  # ── Backend (Spring Boot) ──────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: finance-portal-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: finance_portal
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/finance-portal
+      KEYCLOAK_JWK_URI: http://keycloak:8080/realms/finance-portal/protocol/openid-connect/certs
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://opensearch:9200
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    networks:
+      - finance-network
+
+  # ── Frontend (React – Development Server) ──────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: finance-portal-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_BASE_URL: http://localhost:8080
+      REACT_APP_KEYCLOAK_URL: http://localhost:8443
+      REACT_APP_KEYCLOAK_REALM: finance-portal
+      REACT_APP_KEYCLOAK_CLIENT_ID: finance-web
+    depends_on:
+      - backend
+    networks:
+      - finance-network
+
+# ── Volumes ──────────────────────────────────────────────────
+volumes:
+  pgdata:
+    driver: local
+  opensearch-data:
+    driver: local
+
+# ── Networks ─────────────────────────────────────────────────
+networks:
+  finance-network:
+    driver: bridge
