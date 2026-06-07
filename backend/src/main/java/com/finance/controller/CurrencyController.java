@@ -111,7 +111,7 @@ public class CurrencyController {
         try {
             List<Currency> fetched = dataFetchService.fetchAndSaveTcmbRates();
             return ResponseEntity.ok(
-                    ApiResponse.success(fetched, fetched.size(),
+                    ApiResponse.success(fetched,"Kurlar başarıyla güncellendi. Toplam:" + fetched.size(),
                             "Kurlar güncellendi"));
         } catch (Exception e) {
             logger.error("Manuel kur güncelleme başarısız: {}", e.getMessage());

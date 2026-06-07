@@ -10,7 +10,8 @@ WORKDIR /app
 
 # Bağımlılık cache'i
 COPY package.json package-lock.json* ./
-RUN npm ci --silent
+#RUN npm ci --silent
+RUN npm ci
 
 # Kaynak kodu kopyala ve build al
 COPY . .
